@@ -31,7 +31,8 @@ def parseranges(strranges):
     ranges1 = strranges.split("[")
     ranges = [(int(frame), int(frame)+1) for frame in ranges1[0].split()]
     for range in ranges1[1:]:
-        ranges.append(range.split("]")[0])
+        rng = range.split("]")[0].split()
+        ranges.append((int(rng[0]), int(rng[1])))
         ranges += [(int(frame), int(frame)+1) for frame in range.split("]")[1].split()]
     return ranges
 
