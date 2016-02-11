@@ -7,12 +7,35 @@ import os
 
 def mkvframecount(filename):
     frame_re = re.compile("Track ID .{0,5} video.*tag_number_of_frames:([0-9]*?) .*")
+    uid_re = re.compile("Track ID .{0,5} video.*uid:([0-9]*).*")
     cmd = ["mkvmerge", "-I", filename]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    videouids = []
     for line in proc.stdout:
         t = frame_re.match(line)
         if t:
             return int(t.group(1))
+        t = uid_re.match(line)
+        if t:
+            videouids.append(int(t.group(1)))
+    cmd = ["mkvextract", "tags", filename]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc.wait()
+    t = proc.stdout.read()
+    tree = ET.fromstring(t)
+    for tag in tree:
+        targets = tag.find("Targets")
+        if targets is None: continue
+        uid = targets.find("TrackUID")
+        if uid is None: continue
+        uid = int(uid.text)
+        if uid not in videouids: continue
+        for simpletag in tag:
+            name = simpletag.find("Name")
+            if name is not None and name.text=="NUMBER_OF_FRAMES":
+                string = simpletag.find("String")
+                if string is not None:
+                    return int(string.text)
     return -1
 
 class Mkvsplitpart:
@@ -152,22 +175,24 @@ for i, part in enumerate(parts):
         with open(batname % (i+1), "w") as bat:
             h264name = tempname.rsplit(".", 1)[0] % (i+1) + "v2.h264"
             mkvname = tempname.rsplit(".", 1)[0] % (i+1) + "v2.mkv"
-            bat.write(enccommand+" --seek %d --frames %d -o %s" % 
+            bat.write(enccommand+' --seek %d --frames %d -o "%s"' % 
                      (part.range[0], part.range[1]-part.range[0], h264name))
-            bat.write("\nmkvmerge %s -o %s" % (h264name, mkvname))
-            appendlist.append(mkvname)
+            bat.write('\nmkvmerge "%s" -o "%s"' % (h264name, mkvname))
+            appendlist.append('"%s"' % mkvname)
             reenc_ranges.append(part.range)
-        allbat += batname % (i+1) + "\ncall "
+        allbat += 'call "%s"\n' % (batname % (i+1))
     else:
-        appendlist.append(tempname % (i+1))
+        appendlist.append('"%s"' % (tempname % (i+1)))
 
+filepathv2 = filepath.rsplit(".", 1)[0]+"v2.mkv"
 dontcopy = " -A -S -B -T -M --no-chapters --no-global-tags "
 with open(muxbatname, "w") as bat:
     bat.write("mkvmerge "+dontcopy + (dontcopy+" +").join(appendlist)
-              +" -D "+filepath+" -o "+ filepath.rsplit(".", 1)[0]+"v2.mkv")
+              +' -D "%s" -o "%s"' % (filepath, filepathv2))
 
 with open(allbatname, "w") as bat:
-    bat.write(allbat+muxbatname)
+    allbat += 'call "%s"\n' % muxbatname
+    bat.write(allbat)
 
 avsp.MsgBox("Ranges %s will be redone. \nUse %s to reencode and mux, or run %s and %s manually"
          % (str(reenc_ranges), allbatname, batname, muxbatname))
