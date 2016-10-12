@@ -1,28 +1,38 @@
-from macron_parse import lwiiterate
+import macron_parse
 import bisect
 import subprocess
 import re
 import os
 
-
 def mkvframecount(filename):
-    frame_re = re.compile("Track ID .{0,5} video.*tag_number_of_frames:([0-9]*?) .*")
+    framenum_tag_re = re.compile("Track ID .{0,5} video.*tag_number_of_frames:([0-9]*?) .*")
     uid_re = re.compile("Track ID .{0,5} video.*uid:([0-9]*).*")
     cmd = ["mkvmerge", "-I", filename]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     videouids = []
     for line in proc.stdout:
-        t = frame_re.match(line)
-        if t:
-            return int(t.group(1))
-        t = uid_re.match(line)
-        if t:
-            videouids.append(int(t.group(1)))
+        framenum = framenum_tag_re.match(line)
+        if framenum:
+            return int(framenum.group(1))
+        uid = uid_re.match(line)
+        if uid:
+            videouids.append(int(uid.group(1)))
     cmd = ["mkvextract", "tags", filename]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     proc.wait()
-    t = proc.stdout.read()
-    tree = ET.fromstring(t)
+    xml = proc.stdout.read()
+    tracks = xml.split("<TrackUID>")
+    for track in tracks:
+        if str(videouids[0]) in track:
+            track = track.split("<Name>NUMBER_OF_FRAMES</Name>")[-1]
+            if "<String>" not in track: continue
+            frames = track.split("<String>")[1]
+            if "</String>" not in track: continue
+            frames = frames.split("</String>")[0]
+            return int(frames)
+    
+    #Avs doesn't have ElementTree library
+    """tree = ET.fromstring(t)
     for tag in tree:
         targets = tag.find("Targets")
         if targets is None: continue
@@ -35,29 +45,20 @@ def mkvframecount(filename):
             if name is not None and name.text=="NUMBER_OF_FRAMES":
                 string = simpletag.find("String")
                 if string is not None:
-                    return int(string.text)
+                    return int(string.text)"""
     return -1
 
 class Mkvsplitpart:
-    def __init__(self, range, split, redo):
+    def __init__(self, range, split, toprocess):
         self.range = range
         self.split = split
-        self.redo = redo
+        self.toprocess = toprocess
     
     def __repr__(self):
-        return str((self.range, self.split, self.redo))
+        return str((self.range, self.split, self.toprocess))
     
     def cmdrange(self):
         return "%d-%d" % (self.split)
-
-def parseranges(strranges):
-    ranges1 = strranges.split("[")
-    ranges = [(int(frame), int(frame)+1) for frame in ranges1[0].split()]
-    for range in ranges1[1:]:
-        rng = range.split("]")[0].split()
-        ranges.append((int(rng[0]), int(rng[1])))
-        ranges += [(int(frame), int(frame)+1) for frame in range.split("]")[1].split()]
-    return ranges
 
 options = avsp.GetTextEntry(
             title="Macron_V2",
@@ -71,12 +72,12 @@ options = avsp.GetTextEntry(
                      ["text"],
                      ["text"]],
             width=640)
-            
+
 if len(options)<1:
     return
 filepath = options[0]
 ranges = options[1]
-ranges = parseranges(ranges)
+ranges = macron_parse.parse_ranges(ranges)
 ranges.sort()
 enccommand = options[2]
 index = filepath+".lwi"
@@ -87,7 +88,7 @@ if not os.access(index, os.F_OK):
     avsp.CloseTab()
 
 vframes = []
-for frame in lwiiterate(index):
+for frame in macron_parse.lwiiterate(index):
     if "key" in frame:
         vframes.append(frame)
 vframes.sort(key=(lambda x: x["pts"]))
@@ -96,6 +97,7 @@ keyframes = [0]
 for i, frame in enumerate(vframes):
     if frame["key"]==1:
         keyframes.append(i)
+keyframes.append(len(vframes))
 
 new_l = 0
 new_r = 0
@@ -144,7 +146,7 @@ splitcmd = "frames:"+",".join([str(part.split[1]) for part in parts])
 tempname = filepath.rsplit(".", 1)[0]+"_part_%03d.mkv"
 cmd = ["mkvmerge", filepath, "--split", splitcmd, "-o", tempname]
 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-proc.wait()
+proc.communicate()
 
 frame = 0
 for i, part in enumerate(parts):
@@ -170,7 +172,7 @@ allbat = "call "
 reenc_ranges = []
 
 for i, part in enumerate(parts):
-    if part.redo:
+    if part.toprocess:
         #os.remove(tempname % (i+1))
         with open(batname % (i+1), "w") as bat:
             h264name = tempname.rsplit(".", 1)[0] % (i+1) + "v2.h264"
