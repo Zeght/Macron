@@ -269,7 +269,6 @@ def processranges_good(clip):
             if mnmic > mic:
                 mnmic = mic
                 mnmatch = match
-    #maybe todo: faster version of minnot on array
     mn = INF
     for i, mic in enumerate(cost[-1]):
         if mn > mic:
@@ -304,7 +303,7 @@ def mergetilemetrics(metrics, bord=False):
                     metrics[""][i].mics[j] = max(metrics[""][i].mics[j],
                                                  metrics[suffix][i].mics[j])
 
-def removeuslessmetrics(oclip, metrics):
+def removeuselessmetrics(oclip, metrics):
     clip = Clipinfo(frames=metrics, ranges=oclip.ranges, cyclelen=oclip.cyclelen)
     winsize = clip.cyclelen*2
     winmics = deque()
@@ -383,13 +382,18 @@ def mergeborder(clip, finfo):
         match = currange.match[cyclepos]
         mic = micfrommatch(clip, i, match)
         micbord = micfrommatch(clip2, i, match)
+        
         if ( micbord>mic+20 
           and i>lastignore + 30
           and ( match=="c" and mic_c>=micbord_c+2 and micfrommatch(clip, i, "p")<mic+2
              or match=="p" and mic_p>=micbord_p+2 and micfrommatch(clip, i, "c")<mic+2)):
             mic = micbord #single-frame outliers that don't break the match are ok
             lastignore = i
+        
         if match == "c":
+            #60i should look very bad on n matches, micbord_c is reduced if it doesn't
+            if (micfrommatch(clip2, i, "n")<(255+micbord*2)/3):
+                micbord = (mic*2+micbord)/3
             mic_c += mic
             micbord_c += micbord
             winmics.append(("c", mic, micbord))
@@ -397,11 +401,17 @@ def mergeborder(clip, finfo):
             mic_p += mic
             micbord_p += micbord
             winmics.append(("p", mic, micbord))
+        
         if (i<winsize): continue
-        if (micbord_c>=thr*1.2) and (mic_c*3<=micbord_c):
+        
+        #c-matches on border should be bad and much worse than in center of frame to consider it 60i
+        if (micbord_c>=thr*1.3) and (mic_c*9<=micbord_c):
             appendtorangelist(mix60i, i - winsize/2, clip.ranges[rangenum].match)
-        elif (micbord_p>=thr) and (mic_p*2.5<=micbord_p):
+        #p-matches on border should be bad and much worse than in center of frame to consider it 30p
+        #c-matches souldn't be much worse than p-matches, though
+        elif (micbord_p>=thr) and (mic_p*7<=micbord_p) and ((micbord_p-mic_p) > (micbord_c-mic_c)*2):
             appendtorangelist(mix30p, i - winsize/2, clip.ranges[rangenum].match)
+        
         #shift window
         lmic = winmics.popleft()
         if lmic[0] == "c":
@@ -410,6 +420,7 @@ def mergeborder(clip, finfo):
         else:
             mic_p -= lmic[1]
             micbord_p -= lmic[2]
+    
     for range in mix30p+mix60i:
         for fnum in xrange(range.l, min(clip.lastframe, range.r)):
             for i in xrange(0, 3):
@@ -705,7 +716,7 @@ def processmetrics(metricsfile, prefix, sortbystrength, BSFuji_mode=False):
     mixtop, mixbottom = merge_t_b_chroma(clip, finfo_top, finfo_bottom, finfo_chroma)
     for i in metrics:
         if i!="":
-            removeuslessmetrics(clip, metrics[i])
+            removeuselessmetrics(clip, metrics[i])
     unfilt = metrics[""]
     mergetilemetrics(metrics, bord=True)
     #some unfinished shit you probably don't need
