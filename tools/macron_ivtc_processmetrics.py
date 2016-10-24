@@ -122,57 +122,6 @@ def weightmatch(matchmic):
     penalty = 1.5
     return mic + (penalty if match!=1 else 0)
 
-def findpattern(clip, l, r, quick=False):
-    #cyclepos is position in cycle in [0..cyclepos] range
-    #compute sum of mic for each cyclepos for all matches
-    allsum = 0
-    micsum = zerometricslist(clip.cyclelen)
-    for i in xrange(l, min(r, clip.lastframe + 1)):
-        cyclepos = i % clip.cyclelen
-        for j in xrange(0,3):
-            micsum[cyclepos][j] += clip.frames[i].mics[j]
-            allsum += clip.frames[i].mics[j]
-    #for every cyclepos choose best match (by lowest micsum)
-    pattern = ""
-    for mics in micsum:
-        mn = min(enumerate(mics), key=weightmatch)
-        pattern += matchnumtoletter(mn[0])
-    if not quick:
-        patpat = pattern*2
-        ccccp = "c"*(clip.cyclelen-1)+"p"
-        if (ccccp  in patpat):
-            c = (pattern.find("pc")+1) % clip.cyclelen
-            diff = micsum[c][0] - micsum[c][1]
-            if diff==0:
-                pattern = pattern[:c]+"p"+pattern[c+1:]
-    return (pattern, allsum)
-
-def processchunks(clip):
-    chunkpatterns = []
-    curfinfo = 0
-    lastframe = len(clip.frames)-1
-    r=0
-    #compute chunk metrics and get patterns
-    for i in xrange(0, (lastframe+clip.chunklen-1)/clip.chunklen):
-        (pattern, micsum) = findpattern(clip, i*clip.chunklen, (i+1)*clip.chunklen, quick=True)
-        chunkpatterns.append(Frameinfo(pattern, micsum))
-    return chunkpatterns
-
-def makeranges(clip):
-    chunkpatterns = processchunks(clip)
-    clip.ranges = []
-    for i, chunk in enumerate(chunkpatterns):
-        appendtorangelist(clip.ranges, i,
-                          extraprop=(chunk.match if (chunk.mics>0) else None))
-    for range in clip.ranges:
-        range.l *= clip.chunklen
-        range.r *= clip.chunklen
-    clip.ranges[-1].r = min(clip.ranges[-1].r, clip.lastframe + 1)
-    if clip.ranges[-1].match == None:
-        clip.ranges[-1].match = "c"*clip.cyclelen
-    if clip.ranges[0].match == None:
-        clip.ranges[0].match = "c"*clip.cyclelen
-
 def isgoodpattern(pat, num=False):
     cccpp = ("c"*(len(pat)-2)) + "pp"
     cccnn = ("c"*(len(pat)-2)) + "nn"
@@ -225,9 +174,9 @@ def ranges_merge(clip, thr=0):
         clip.ranges = [range for d, range in zip(delete, clip.ranges) if not d]
     return merged
 
-def processranges_good(clip):
+def ranges_make(clip):
     INF = 2000000000
-    penalty = 120
+    change_penalty = 200
     cost = []
     prev = []
     patterns_num = 3**clip.cyclelen
@@ -257,8 +206,8 @@ def processranges_good(clip):
         else:
             for match in xrange(patterns_num):
                 mic = clip.frames[i].mics[match / pow3 % 3] * 4
-                if cost[i-1][mnmatch] + penalty <= cost[i-1][match] :
-                    cost[i].append(cost[i-1][mnmatch] + mic + penalty - patternweights[match])
+                if cost[i-1][mnmatch] + change_penalty <= cost[i-1][match] :
+                    cost[i].append(cost[i-1][mnmatch] + mic + change_penalty - patternweights[match])
                     prev[i].append(mnmatch)
                 else:
                     cost[i].append(cost[i-1][match] + mic - patternweights[match])
@@ -384,7 +333,7 @@ def mergeborder(clip, finfo):
         micbord = micfrommatch(clip2, i, match)
         
         if ( micbord>mic+20 
-          and i>lastignore + 30
+          and i>lastignore + 3*winsize
           and ( match=="c" and mic_c>=micbord_c+2 and micfrommatch(clip, i, "p")<mic+2
              or match=="p" and mic_p>=micbord_p+2 and micfrommatch(clip, i, "c")<mic+2)):
             mic = micbord #single-frame outliers that don't break the match are ok
@@ -398,20 +347,28 @@ def mergeborder(clip, finfo):
             micbord_c += micbord
             winmics.append(("c", mic, micbord))
         else:
+            #don't polute metrics when border is seemingly better than center
+            if mic*2>micbord:
+                mic = micbord*1.5
             mic_p += mic
             micbord_p += micbord
             winmics.append(("p", mic, micbord))
-        
-        if (i<winsize): continue
-        
         #c-matches on border should be bad and much worse than in center of frame to consider it 60i
         if (micbord_c>=thr*1.3) and (mic_c*9<=micbord_c):
+            if lastignore >= i - winsize:
+                for t in xrange(lastignore-winsize/2, i-winsize/2):
+                    appendtorangelist(mix60i, t, clip.ranges[rangenum].match)
+                lastignore = -100
             appendtorangelist(mix60i, i - winsize/2, clip.ranges[rangenum].match)
         #p-matches on border should be bad and much worse than in center of frame to consider it 30p
         #c-matches souldn't be much worse than p-matches, though
         elif (micbord_p>=thr) and (mic_p*7<=micbord_p) and ((micbord_p-mic_p) > (micbord_c-mic_c)*2):
+            if lastignore >= i - winsize:
+                for t in xrange(lastignore-winsize/2, i-winsize/2):
+                    appendtorangelist(mix30p, t, clip.ranges[rangenum].match)
+                lastignore = -100
             appendtorangelist(mix30p, i - winsize/2, clip.ranges[rangenum].match)
-        
+        if (i<winsize): continue
         #shift window
         lmic = winmics.popleft()
         if lmic[0] == "c":
@@ -429,7 +386,7 @@ def mergeborder(clip, finfo):
 
 def merge_t_b_chroma(clip, finfo_t, finfo_b, finfo_cr):
     mix = (mergeborder(clip, finfo_t), mergeborder(clip, finfo_b))
-    processranges_good(clip)
+    ranges_make(clip)
     for i, frame in enumerate(clip.frames):
         for m in xrange(0, 3):
             finfo_cr[i].mics[m]/=2
@@ -518,7 +475,6 @@ def PP(clip, cleanmetrics, unfiltmetrics, BSFuji_mode):
     for i, frame in enumerate(clip.frames):
         while rangenum < len(clip.ranges) and clip.ranges[rangenum].r<=i:
             rangenum+=1
-        if (rangenum >= len(clip.ranges)): break
         cyclepos = i % clip.cyclelen
         range = clip.ranges[rangenum]
         match = range.match[cyclepos]
@@ -601,17 +557,18 @@ def decimate_points(clip, points):
     i = 0
     j = 0
     while (i<len(clip.ranges) and j<len(points)):
-        if clip.ranges[i].r<=points[j]:
-            i+=1
+        if (i<len(clip.ranges)):
+            if clip.ranges[i].r<=points[j]:
+                i+=1
+            else:
+                dropped = points[j] / clip.cyclelen
+                if (clip.ranges[i].drop < points[j] % clip.cyclelen):
+                    dropped += 1
+                points[j] -= dropped
+                j+=1
         else:
-            dropped = points[j] / len(clip.ranges[i].match)
-            if (clip.ranges[i].drop < points[j] % len(clip.ranges[i].match)):
-                dropped += 1
-            points[j] -= dropped
+            points[j] -= points[j] / clip.cyclelen + 1
             j+=1
-    while (j<len(points)):
-        points[j] -= points[j] / len(clip.ranges[0].match) + 1
-        j+=1
     return points
 
 def decimate_ranges(clip, ranges, filter=True):
@@ -708,8 +665,7 @@ def processmetrics(metricsfile, prefix, sortbystrength, BSFuji_mode=False):
     mergetilemetrics(metrics)
     finfo = metrics[""]
     clip = Clipinfo(frames=finfo, ranges=None, cyclelen=5, chunklen=120)
-    makeranges(clip)
-    processranges_good(clip)
+    ranges_make(clip)
     finfo_top = metrics["_t"]
     finfo_bottom = metrics["_b"]
     finfo_chroma = metrics["_cr"]

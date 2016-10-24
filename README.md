@@ -78,7 +78,7 @@ Parameters:
 * overshoot: if =1 makes bright field as dark as second, if > 1 - even darker (multiplies difference by overshoot). Default - 2
 * hint: if set to true, uses TFM hints to flip field order on p matches.
 
-##ivtcpp_checkTFMhints(clip src)
+####ivtcpp_checkTFMhints(clip src)
 Checks whether clip contains TFM hints or not
 
 ##Tips
@@ -87,6 +87,29 @@ Checks whether clip contains TFM hints or not
 * You can edit mappings files manually, m2s2maps.txt and deblock.txt are usual RFS ranges, nnedi.txt specifies which nnedi mode to use (0 or 1), vardeblock.txt and mc_presets.txt specifies strength of post-processing (negative values in mc_presets.txt are standing for unidirectional motion compensation, positive - for bidirectional), mixtop.txt and mixbottom.txt contains ranges and frame_ref parameters for ivtc_txtX0mc, tfmovr.txt and tdcovr.txt are usual TFM/TDecimate override files.
 * You can use macron_ivtc_getmetrics.py and macron_ivtc_processmetrics.py in command line. macron_ivtc_getmetrics.py creates metrics from output of avisynth script, macron_ivtc_processmetrics.py uses those metrics to create mappings for TIVTC and ivtcpp.
 
+##Script templates
+Default template is
+```
+slow = 2
+display = false
+prefix = "%prefix"
+%source
+#You should fix borders before processing (fixborders/balanceforders/fillmargins)
+#Delogo helps a bit too
+src = last#.fixborders(l="d2;d1", r="d2;d1")
+ivtc = src.tfm(pp=0, ovr=prefix+"tfmovr.txt").tdecimate(ovr=prefix+"tdcovr.txt")
+croph = src.Height()/18*4
+inflate = 40
+ivtc
+ivtcpp_mixedcontent(src, last, prefix+"mixbot.txt", y1=src.Height()-croph, inflate=inflate, slow=slow)
+ivtcpp_mixedcontent(src, last, prefix+"mixtop.txt", y2=croph, inflate=inflate, slow=slow)
+ivtcpp(fileprefix=prefix, slow=slow, display=display, lsb=false)
+```
+%prefix is replaced with prefix to path to files which you chose in macro.
+
+%source is replaced with a script you had when you called IVTC macro.
+
+You can use a custom template by saving it as Macron_IVTC_template.avsi in AvsPmod/macros directory.
 ###Script examples
 ####H264 clip
 ```

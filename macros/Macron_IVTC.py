@@ -3,6 +3,7 @@ import macron_ivtc_getmetrics
 import macron_ivtc_processmetrics
 import textwrap
 import threading
+import sys
 
 scriptsrc = avsp.GetText()
 srcpath = avsp.GetScriptFilename()
@@ -44,27 +45,34 @@ if not options[1]:
     pr = 0
     next = 0
     while True:
+        pr = max(pr, next)
         if next<0:
             break
-        pr = max(pr, next)
+        if (pr==target):
+            pbox.Update(target-1)
+            while next>=0:
+                next = progress.next()
+            break
         if not pbox.Update(min(pr, target))[0]: #canceled
             kill.set()
             pbox.Destroy()
             return
         next = progress.next()
+    pbox.Close()
     pbox.Destroy()
+        
+
 prefix = options[4]
 sortbystrength = options[5]
 if not os.path.isabs(prefix):
     prefix = os.path.join(os.path.dirname(outfile), prefix)
 msg = macron_ivtc_processmetrics.processmetrics(outfile+outext, prefix, sortbystrength)
 avsp.MsgBox(msg)
-
 template = """
 slow = 2
 display = false
-prefix = "{}"
-{}
+prefix = "%prefix"
+%source
 #You should fix borders before processing (fixborders/balanceforders/fillmargins)
 #Delogo helps a bit too
 src = last#.fixborders(l="d2;d1", r="d2;d1")
@@ -76,7 +84,10 @@ ivtcpp_mixedcontent(src, last, prefix+"mixbot.txt", y1=src.Height()-croph, infla
 ivtcpp_mixedcontent(src, last, prefix+"mixtop.txt", y2=croph, inflate=inflate, slow=slow)
 ivtcpp(fileprefix=prefix, slow=slow, display=display, lsb=false)
 """
-
-script = textwrap.dedent(template).format(prefix, avsp.GetText())
+template_path = os.path.dirname(sys.argv[0])+"\\macros\\Macron_IVTC_template.avsi"
+if os.path.exists(template_path):
+    with open(template_path, "r") as file:
+        template = file.read()
+script = textwrap.dedent(template).replace("%prefix", prefix).replace("%source", avsp.GetText())
 avsp.NewTab(copyselected=False)
 avsp.SetText(script)
