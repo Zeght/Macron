@@ -1,9 +1,18 @@
 import re
-#from fractions import Fraction
+import os
+#there's no fraction lib in avsp build
+#from fractions import Fraction 
 
-max_frame = 10000000
+max_frame = 1000000000
 
 def lwiiterate(filename):
+    if not filename.endswith(".lwi"):
+        filename += ".lwi"
+    try:
+        index_avs(filename[:-4])
+    except:
+        index_shell(filename[:-4])
+    
     ints = ["Index", "Type", "Codec", "POS", "PTS", "DTS", "EDI",
             "Rate", "BPS", "Length", "Key", "Pic", "POC", "Repeat",
             "Field", "Width", "Height", "ColorSpace"]
@@ -30,11 +39,53 @@ def lwiiterate(filename):
                         val = i[1]
                     vals[i[0].lower()] = val
 
+def index_avs(srcpath, force=False):
+    if force or not os.path.exists(srcpath + ".lwi"):
+        tab = avsp.GetCurrentTabIndex()
+        avsp.NewTab(copyselected=False)
+        avsp.InsertText('lwlibavvideosource("%s")' % srcpath)
+        avsp.UpdateVideo()
+        avsp.CloseTab()
+        avsp.SelectTab(tab)
+
+def index_shell(srcpath):
+    import subprocess
+    scriptsrc = ('lwlibavvideosource("%s")' % srcpath)
+    avspath = os.path.splitext(srcpath)[0]+".avs"
+    with open(avspath, "w") as avsfile:
+        avsfile.write(scriptsrc)
+    cmd = ["avs2yuv", avspath, "-frames", "1", "-"]
+    process = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=open(os.devnull, 'w'))
+    out, err = process.communicate()
+    process.wait()
+    os.remove(avspath)
+
+def get_keyframes(filepath, include_end=False):
+    try:
+        index_avs(filepath)
+    except:
+        index_avs(filepath)
+        index_shell(filepath)
+    index = filepath+".lwi"
+    vframes = []
+    for frame in lwiiterate(index):
+        if "key" in frame:
+            vframes.append(frame)
+    vframes.sort(key=(lambda x: x["pts"]))
+    keyframes = []
+    for i, frame in enumerate(vframes):
+        if frame["key"]==1:
+            keyframes.append(i)
+    if include_end:
+        keyframes.append(len(vframes))
+    return keyframes
+
 def getAVshifts(filename):
     #from fractions import Fraction
     vid = list()
     aud = list()
-    for i in lwiiterate(filename):
+    index = filename + ".lwi"
+    for i in lwiiterate(index):
         if "channels" in i:
             aud.append(i)
         elif i.get("field", 2)!=2:

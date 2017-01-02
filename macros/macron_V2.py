@@ -1,4 +1,5 @@
 import macron_parse
+macron_parse.avsp = avsp
 import bisect
 import subprocess
 import re
@@ -19,8 +20,8 @@ def mkvframecount(filename):
             videouids.append(int(uid.group(1)))
     cmd = ["mkvextract", "tags", filename]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    proc.wait()
     xml = proc.stdout.read()
+    proc.communicate()
     tracks = xml.split("<TrackUID>")
     for track in tracks:
         if str(videouids[0]) in track:
@@ -79,25 +80,12 @@ filepath = options[0]
 ranges = options[1]
 ranges = macron_parse.parse_ranges(ranges)
 ranges.sort()
+if len(ranges)==0:
+    avsp.MsgBox("No ranges, exiting")
+    return
 enccommand = options[2]
-index = filepath+".lwi"
-if not os.access(index, os.F_OK):
-    avsp.NewTab(copyselected=False)
-    avsp.InsertText('lwlibavvideosource("%s")' % filepath)
-    avsp.UpdateVideo()
-    avsp.CloseTab()
-
-vframes = []
-for frame in macron_parse.lwiiterate(index):
-    if "key" in frame:
-        vframes.append(frame)
-vframes.sort(key=(lambda x: x["pts"]))
-
-keyframes = [0]
-for i, frame in enumerate(vframes):
-    if frame["key"]==1:
-        keyframes.append(i)
-keyframes.append(len(vframes))
+            
+keyframes = macron_parse.get_keyframes(filepath, include_end=True)
 
 new_l = 0
 new_r = 0
@@ -115,10 +103,8 @@ if new_r>new_l:
             snapranges.append((new_l, new_r))
 
 framecount = mkvframecount(filepath)
-if framecount!=len(vframes):
-    print "Warning: mkvmerge reports %d frames but .lwi has %d frames" % (framecount, len(vframes))
-
-keyframes.append(framecount)
+if framecount!=keyframes[-1]:
+    print "Warning: mkvmerge reports %d frames but .lwi has %d frames" % (framecount, keyframes[-1])
 
 parts = []
 

@@ -1,4 +1,5 @@
 import macron_parse
+macron_parse.avsp = avsp
 import subprocess
 import re
 import os
@@ -10,7 +11,7 @@ def format_duration(ms):
     s = s%60
     h = m/60
     m = m%60
-    return "%d:%d:%d.%d" % (h, m, s, ms)
+    return "%d:%d:%d.%03d" % (h, m, s, ms)
 
 def getstrings(line):
     strings = []
@@ -43,6 +44,10 @@ def find_videofile(s):
         strings = getstrings(line)
         for s in strings:
             if ("." in s and s.rsplit(".", 1)[-1].lower() in extensions):
+                if s[-3:]=="d2v" and os.access(s, os.F_OK):
+                    with open(s, "r") as index:
+                        header, number, file = readline(), readline(), readline()
+                        s = file
                 return s
     return ""
 
@@ -113,14 +118,7 @@ if fps is None:
     return
 ranges.sort()
 if source=="FF":
-    index = filepath + ".lwi"
-    if not os.access(index, os.F_OK):
-        avsp.NewTab(copyselected=False)
-        avsp.InsertText('lwlibavvideosource("%s")' % filepath)
-        avsp.UpdateVideo()
-        avsp.CloseTab()
-
-    delays = macron_parse.getAVshifts(index)
+    delays = macron_parse.getAVshifts(filepath)
     delay = delays["delayFF"]-delays["delayDG"]
 else:
     delay = 0
